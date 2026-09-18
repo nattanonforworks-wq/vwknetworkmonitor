@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voidwalker Network Monitor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 p-4 md:p-8 font-sans min-h-screen relative pb-24">
+    <div class="max-w-6xl mx-auto">
+        <!-- Header -->
+        <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 border-b border-gray-800 pb-4">
+            <div>
+                <h1 class="text-2xl font-bold text-white flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-7 w-7 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                    </svg>
+                    Voidwalker Network Monitor
+                </h1>
+            </div>
+
+            <div class="flex items-center gap-3 flex-wrap">
+                <!-- ปุ่มย้อนกลับหน้า Dashboard หลัก (index.html) -->
+                <a href="/" class="bg-gray-800 hover:bg-gray-700 text-gray-200 font-semibold px-4 py-2.5 rounded-lg border border-gray-700 transition flex items-center gap-2 text-sm">
+                    Dashboard
+                </a>
+
+                <!-- ปุ่ม Reset Counter -->
+                <button onclick="resetNodeIndex()" class="bg-gray-800 hover:bg-gray-700 text-gray-300 font-semibold px-4 py-2.5 rounded-lg border border-gray-700 transition flex items-center gap-2 text-sm">
+                     Reset Node
+                </button>
+
+                <!-- ปุ่มเพิ่ม Node -->
+                <button onclick="createNewAgentCard()" class="bg-blue-600 hover:bg-blue-500 text-white font-semibold px-5 py-2.5 rounded-lg transition shadow-lg flex items-center justify-center gap-2 text-sm">
+                    Create Node
+                </button>
+            </div>
+        </div>
+
+        <!-- Input Configuration Form -->
+        <div class="bg-gray-900 border border-gray-800 p-5 rounded-xl shadow-md mb-8">
+            <h2 class="text-sm font-semibold text-gray-300 uppercase tracking-wider mb-3">กำหนดค่า NODE ใหม่</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <input type="text" id="newNodeId" placeholder="Node name" class="w-full bg-black border border-gray-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500 text-sm">
+                </div>
+                <div>
+                    <input type="text" id="newLocation" placeholder="Room name" class="w-full bg-black border border-gray-800 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-blue-500 text-sm">
+                </div>
+            </div>
+        </div>
+
+        <!-- Agents Display Grid -->
+        <div id="agentsGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5"></div>
+    </div>
+
+    <script>
+        const socket = io();
+        let agentIndex = 1;
+        const activeAgents = {};
+
+        // ฟังก์ชัน Reset ลำดับ Node ID ให้กลับไปเริ่มที่ 1
+        function resetNodeIndex() {
+            agentIndex = 1;
+            alert('รีเซ็ตลำดับตัวนับ Node สำเร็จ! Node ถัดไปจะเริ่มจาก Node-01');
+        }
+
+        async function measureLatency() {
+            const start = performance.now();
+            try {
+                await fetch('/favicon.ico?cache=' + Math.random(), { method: 'HEAD', mode: 'no-cors' });
+                return Math.round(performance.now() - start);
+            } catch (error) {
+                return 0;
+            }
+        }
+
+        function calculateJitter(history, newLatency) {
+            history.push(newLatency);
+            if (history.length > 10) history.shift();
+            if (history.length < 2) return 0;
+            let totalDiff = 0;
+            for (let i = 1; i < history.length; i++) {
+                totalDiff += Math.abs(history[i] - history[i - 1]);
+            }
+            return Math.round(totalDiff / (history.length - 1));
+        }
+
+        function createNewAgentCard() {
+            const nodeIdInput = document.getElementById('newNodeId');
+            const locationInput = document.getElementById('newLocation');
+
+            const nodeId = nodeIdInput.value.trim() || `Node-${String(agentIndex).padStart(2, '0')}`;
+            const location = locationInput.value.trim() || 'Client Edge Network';
+            const uniqueId = 'agent-' + Date.now();
+
+            agentIndex++;
+
+            const card = document.createElement('div');
+            card.id = uniqueId;
+            card.className = "bg-gray-900 border border-gray-800 p-5 rounded-xl shadow-lg relative flex flex-col justify-between";
+
+            card.innerHTML = `
+                <div>
+                    <div class="flex justify-between items-start mb-2">
+                        <h3 class="font-bold text-lg text-white truncate">${nodeId}</h3>
+                        <span id="status-${uniqueId}" class="px-2.5 py-0.5 text-xs font-bold rounded-full bg-yellow-950 text-yellow-400 border border-yellow-800">IDLE</span>
+                    </div>
+                    <p class="text-xs text-gray-400 mb-4">📍 ${location}</p>
+                    <div class="bg-black p-3 rounded-lg text-xs font-mono border border-gray-800 space-y-2 mb-4">
+                        <div class="flex justify-between"><span class="text-gray-400">Ping / Jitter:</span><span class="text-white font-bold"><span id="lat-${uniqueId}">--</span> ms / <span id="jit-${uniqueId}">--</span> ms</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">Bandwidth (RX/TX):</span><span class="text-blue-400 font-bold"><span id="rx-${uniqueId}">--</span> / <span id="tx-${uniqueId}">--</span> Mbps</span></div>
+                        <div class="flex justify-between"><span class="text-gray-400">HTTP / DNS:</span><span class="text-purple-400 font-bold"><span id="http-${uniqueId}">--</span> ms / <span id="dns-${uniqueId}">--</span> ms</span></div>
+                    </div>
+                </div>
+                <div class="flex gap-2">
+                    <button id="btn-${uniqueId}" onclick="toggleAgentStatus('${uniqueId}', '${nodeId}', '${location}')" class="flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2 rounded-lg text-sm transition">Start Agent</button>
+                    <button onclick="removeAgentCard('${uniqueId}')" class="bg-gray-800 hover:bg-rose-900 text-gray-300 hover:text-white px-3 py-2 rounded-lg text-sm border border-gray-700 transition">ลบ</button>
+                </div>
+            `;
+
+            document.getElementById('agentsGrid').appendChild(card);
+            nodeIdInput.value = '';
+            locationInput.value = '';
+        }
+
+        function toggleAgentStatus(uniqueId, nodeId, location) {
+            const btn = document.getElementById(`btn-${uniqueId}`);
+            const statusTag = document.getElementById(`status-${uniqueId}`);
+
+            if (!activeAgents[uniqueId]) {
+                btn.innerText = 'Stop Agent';
+                btn.className = 'flex-1 bg-rose-600 hover:bg-rose-500 text-white font-semibold py-2 rounded-lg text-sm transition';
+                statusTag.innerText = 'RUNNING';
+                statusTag.className = 'px-2.5 py-0.5 text-xs font-bold rounded-full bg-emerald-950 text-emerald-400 border border-emerald-800';
+
+                const latencyHistory = [];
+                const startTime = Date.now();
+
+                const intervalId = setInterval(async () => {
+                    const latency = await measureLatency();
+                    const jitter = calculateJitter(latencyHistory, latency);
+                    const rxRate = (Math.random() * 50 + 5).toFixed(2);
+                    const txRate = (Math.random() * 20 + 2).toFixed(2);
+                    const httpLatency = Math.floor(Math.random() * 30) + 15;
+                    const dnsLatency = Math.floor(Math.random() * 8) + 2;
+                    const packetLoss = latency === 0 ? 100 : 0;
+                    const uptime = Math.floor((Date.now() - startTime) / 1000);
+
+                    document.getElementById(`lat-${uniqueId}`).innerText = latency;
+                    document.getElementById(`jit-${uniqueId}`).innerText = jitter;
+                    document.getElementById(`rx-${uniqueId}`).innerText = rxRate;
+                    document.getElementById(`tx-${uniqueId}`).innerText = txRate;
+                    document.getElementById(`http-${uniqueId}`).innerText = httpLatency;
+                    document.getElementById(`dns-${uniqueId}`).innerText = dnsLatency;
+
+                    socket.emit('agent_heartbeat', { 
+                        nodeId, 
+                        location, 
+                        latency, 
+                        jitter, 
+                        packetLoss, 
+                        rxRate, 
+                        txRate, 
+                        netErrors: 0,
+                        httpLatency, 
+                        httpStatus: 200, 
+                        dnsLatency, 
+                        activeConns: Math.floor(Math.random() * 100) + 10,
+                        uptime 
+                    });
+                }, 3000);
+
+                activeAgents[uniqueId] = { intervalId, nodeId };
+            } else {
+                clearInterval(activeAgents[uniqueId].intervalId);
+                delete activeAgents[uniqueId];
+                btn.innerText = 'Start Agent';
+                btn.className = 'flex-1 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold py-2 rounded-lg text-sm transition';
+                statusTag.innerText = 'STOPPED';
+                statusTag.className = 'px-2.5 py-0.5 text-xs font-bold rounded-full bg-yellow-950 text-yellow-400 border border-yellow-800';
+            }
+        }
+
+        function removeAgentCard(uniqueId) {
+            if (activeAgents[uniqueId]) {
+                socket.emit('remove_agent', { nodeId: activeAgents[uniqueId].nodeId });
+                clearInterval(activeAgents[uniqueId].intervalId);
+                delete activeAgents[uniqueId];
+            }
+            const card = document.getElementById(uniqueId);
+            if (card) card.remove();
+        }
+    </script>
+</body>
+</html>
